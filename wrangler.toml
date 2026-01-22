@@ -1,0 +1,14 @@
+name = "geostar-dashboard"
+main = "index.ts"
+compatibility_date = "2025-01-17"
+compatibility_flags = ["nodejs_compat"]
+account_id = "c43f1299b8ba7762724ae972b9e82e52"
+
+[[d1_databases]]
+binding = "GEOSTAR_DB"
+database_name = "geostar"
+database_id = "2734fb86-f379-48cf-b226-68e8e07dc5b9"
+
+[observability]
+enabled = true
+head_sampling_rate = 1

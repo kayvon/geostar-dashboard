@@ -1,0 +1,16 @@
+{
+  "name": "geostar-dashboard",
+  "version": "0.0.1",
+  "description": "dashboard for injested geostar data",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler dev --persist-to ../.wrangler",
+    "deploy": "wrangler deploy",
+    "db:migrate:local": "wrangler d1 execute GEOSTAR_DB --local --persist-to ../.wrangler --file=../injest/schema.sql",
+    "db:query": "wrangler d1 execute GEOSTAR_DB --local --persist-to ../.wrangler"
+  },
+  "devDependencies": {
+    "hono": "^4.11.5",
+    "wrangler": "^4.60.0"
+  }
+}

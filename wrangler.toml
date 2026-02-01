@@ -2,7 +2,7 @@ name = "geostar-dashboard"
 main = "index.ts"
 compatibility_date = "2025-01-17"
 compatibility_flags = ["nodejs_compat"]
-account_id = "c43f1299b8ba7762724ae972b9e82e52"
+account_id = "ebb822c9645a8923b6fe123f2c2fb402"
 
 [[d1_databases]]
 binding = "GEOSTAR_DB"

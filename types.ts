@@ -1,5 +1,6 @@
 export interface Env {
   GEOSTAR_DB: D1Database;
+  TIMEZONE: string;
 }
 
 export interface EnergyReading {

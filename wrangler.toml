@@ -9,6 +9,9 @@ binding = "GEOSTAR_DB"
 database_name = "geostar"
 database_id = "2734fb86-f379-48cf-b226-68e8e07dc5b9"
 
+[vars]
+TIMEZONE = "America/New_York"
+
 [observability]
 enabled = true
 head_sampling_rate = 1

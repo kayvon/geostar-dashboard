@@ -27,6 +27,7 @@ export function layout(title: string, content: string): string {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>${title} - GeoStar Energy Dashboard</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
   <style>
     :root {
       --pico-font-size: 16px;
@@ -44,14 +45,14 @@ export function layout(title: string, content: string): string {
     .stats-grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-      gap: 1rem;
-      margin-bottom: 2rem;
+      gap: 0.75rem;
+      margin-bottom: 1rem;
     }
     .stat-card {
       background: var(--pico-card-background-color);
       border: 1px solid var(--pico-muted-border-color);
       border-radius: var(--pico-border-radius);
-      padding: 1.5rem;
+      padding: 1rem;
       text-align: center;
     }
     .stat-card h3 {
@@ -61,7 +62,7 @@ export function layout(title: string, content: string): string {
       text-transform: uppercase;
     }
     .stat-card .value {
-      font-size: 2rem;
+      font-size: 1.5rem;
       font-weight: bold;
       color: var(--pico-primary);
     }
@@ -117,8 +118,74 @@ export function layout(title: string, content: string): string {
       background: var(--pico-card-background-color);
       border: 1px solid var(--pico-muted-border-color);
       border-radius: var(--pico-border-radius);
-      padding: 1rem;
-      margin-bottom: 1rem;
+      padding: 0.5rem 1rem;
+      margin-bottom: 0.75rem;
+      font-size: 0.9rem;
+    }
+    .table-scroll-container {
+      max-height: 40vh;
+      overflow-y: auto;
+      border: 1px solid var(--pico-muted-border-color);
+      border-radius: var(--pico-border-radius);
+    }
+    .table-scroll-container table {
+      font-size: 0.75rem;
+      margin-bottom: 0;
+    }
+    .table-scroll-container thead {
+      position: sticky;
+      top: 0;
+      background: var(--pico-background-color);
+      z-index: 1;
+    }
+    tr.chart-highlight, tr.chart-highlight > td {
+      background: var(--pico-primary-focus) !important;
+      transition: background 0.15s ease;
+    }
+    @media (max-height: 700px) {
+      .table-scroll-container { max-height: 30vh; }
+    }
+    @media (max-height: 500px) {
+      .table-scroll-container { max-height: none; }
+    }
+    .filter-bar {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      height: calc(1rem * var(--pico-line-height) + 0.75rem + 12px);
+    }
+    .filter-pills {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      overflow-x: auto;
+      height: 100%;
+    }
+    .filter-pill {
+      all: unset;
+      box-sizing: border-box;
+      padding: 0.3rem 0.75rem;
+      border-radius: 999px;
+      border: 1px solid var(--pico-muted-border-color);
+      background: #dbeafeaa;
+      color: var(--pico-primary);
+      cursor: pointer;
+      white-space: nowrap;
+      font-size: 0.85rem;
+      line-height: normal;
+    }
+    .filter-pill.active {
+      background: var(--pico-primary);
+      color: var(--pico-primary-inverse);
+      border-color: var(--pico-primary);
+    }
+    .filter-clear {
+      all: unset;
+      cursor: pointer;
+      font-size: 1.2rem;
+      color: var(--pico-muted-color);
+      padding: 0.25rem 0.5rem;
+      line-height: normal;
     }
   </style>
 </head>
@@ -142,20 +209,50 @@ export function layout(title: string, content: string): string {
     </p>
   </footer>
   <script>
-    // Front-end filtering by gateway
-    function filterByGateway(gatewayId) {
-      const rows = document.querySelectorAll('[data-gateway]');
-      const statCards = document.querySelectorAll('[data-stat]');
+    // --- Filter State Machine (ad-hoc, xstate-migration-ready) ---
+    const filterState = {
+      gateways: new Set(),
+      kwhMin: null,
+    };
 
-      // Track totals for updating stat cards and summary
+    function dispatch(event) {
+      switch (event.type) {
+        case 'TOGGLE_GATEWAY': {
+          const { id } = event;
+          if (filterState.gateways.has(id)) {
+            filterState.gateways.delete(id);
+          } else {
+            filterState.gateways.clear();
+            filterState.gateways.add(id);
+          }
+          break;
+        }
+        case 'SET_KWH_MIN':
+          filterState.kwhMin = event.value;
+          break;
+        case 'CLEAR_ALL':
+          filterState.gateways.clear();
+          filterState.kwhMin = null;
+          break;
+      }
+      applyFilters();
+      updateFilterUI();
+    }
+
+    function applyFilters() {
+      const rows = document.querySelectorAll('[data-gateway]');
       let totalEnergy = 0, totalHeating = 0, totalCooling = 0, totalRuntime = 0;
 
       rows.forEach(row => {
-        const rowGateway = row.getAttribute('data-gateway');
-        if (!gatewayId || gatewayId === 'all' || rowGateway === gatewayId) {
+        const gw = row.getAttribute('data-gateway');
+        const energy = parseFloat(row.getAttribute('data-energy') || '0');
+
+        const matchGateway = filterState.gateways.size === 0 || filterState.gateways.has(gw);
+        const matchKwh = filterState.kwhMin === null || energy > filterState.kwhMin;
+
+        if (matchGateway && matchKwh) {
           row.classList.remove('hidden');
-          // Accumulate stats from visible rows
-          totalEnergy += parseFloat(row.getAttribute('data-energy') || '0');
+          totalEnergy += energy;
           totalHeating += parseFloat(row.getAttribute('data-heating') || '0');
           totalCooling += parseFloat(row.getAttribute('data-cooling') || '0');
           totalRuntime += parseFloat(row.getAttribute('data-runtime') || '0');
@@ -164,12 +261,11 @@ export function layout(title: string, content: string): string {
         }
       });
 
-      // Update stat cards if they exist (overview page)
-      statCards.forEach(card => {
+      // Update stat cards (overview page)
+      document.querySelectorAll('[data-stat]').forEach(card => {
         const statType = card.getAttribute('data-stat');
         const valueEl = card.querySelector('.value');
         if (!valueEl) return;
-
         let value;
         switch(statType) {
           case 'energy': value = totalEnergy; break;
@@ -177,25 +273,40 @@ export function layout(title: string, content: string): string {
           case 'cooling': value = totalCooling; break;
           case 'runtime': value = totalRuntime; break;
         }
-
         if (value !== undefined) {
-          if (statType === 'runtime') {
-            valueEl.textContent = formatRuntime(value);
-          } else {
-            valueEl.textContent = formatPower(value);
-          }
+          valueEl.textContent = statType === 'runtime' ? formatRuntime(value) : formatPower(value);
         }
       });
 
-      // Update daily summary if it exists (daily page)
+      // Update daily summary (daily page)
       const summaryEnergy = document.getElementById('summary-energy');
       const summaryHeating = document.getElementById('summary-heating');
       const summaryCooling = document.getElementById('summary-cooling');
-
       if (summaryEnergy) summaryEnergy.textContent = formatPower(totalEnergy);
       if (summaryHeating) summaryHeating.textContent = formatPower(totalHeating);
       if (summaryCooling) summaryCooling.textContent = formatPower(totalCooling);
+
+      updateChart();
     }
+
+    function updateFilterUI() {
+      document.querySelectorAll('.filter-pill[data-filter="gateway"]').forEach(pill => {
+        pill.classList.toggle('active', filterState.gateways.has(pill.dataset.value));
+      });
+      const hasActiveFilters = filterState.gateways.size > 0 || filterState.kwhMin !== null;
+      document.getElementById('clear-filters')?.classList.toggle('hidden', !hasActiveFilters);
+    }
+
+    // Wire up filter pill clicks
+    document.querySelector('.filter-bar')?.addEventListener('click', (e) => {
+      const pill = e.target.closest('.filter-pill');
+      if (pill?.dataset.filter === 'gateway') {
+        dispatch({ type: 'TOGGLE_GATEWAY', id: pill.dataset.value });
+      }
+      if (e.target.closest('.filter-clear')) {
+        dispatch({ type: 'CLEAR_ALL' });
+      }
+    });
 
     function formatPower(kWh) {
       return kWh.toFixed(2);
@@ -203,6 +314,231 @@ export function layout(title: string, content: string): string {
 
     function formatRuntime(hours) {
       return hours.toFixed(1);
+    }
+
+    // Chart.js initialization for daily page
+    (function() {
+      const canvas = document.getElementById('energy-chart');
+      if (!canvas || typeof __chartData === 'undefined') return;
+
+      const { hourlyData, gateways } = __chartData;
+      const colors = ['#3b82f6', '#f59e0b', '#10b981', '#ef4444'];
+
+      // Build per-gateway series
+      const datasets = [];
+      gateways.forEach((gw, i) => {
+        const data = new Array(24).fill(0);
+        hourlyData.forEach(row => {
+          if (row.gateway_id === gw.id) {
+            const h = parseInt(row.hour, 10);
+            data[h] = row.total_energy;
+          }
+        });
+        datasets.push({
+          label: gw.name,
+          data: data,
+          borderColor: colors[i % colors.length],
+          backgroundColor: colors[i % colors.length] + '22',
+          borderWidth: 2,
+          tension: 0.3,
+          pointRadius: 2,
+          _gatewayId: gw.id,
+        });
+      });
+
+      // Total series
+      const totalData = new Array(24).fill(0);
+      datasets.forEach(ds => {
+        ds.data.forEach((v, i) => { totalData[i] += v; });
+      });
+      datasets.push({
+        label: 'Total',
+        data: totalData,
+        borderColor: '#111827',
+        backgroundColor: '#11182722',
+        borderWidth: 3,
+        tension: 0.3,
+        pointRadius: 2,
+        _gatewayId: '__total',
+      });
+
+      const labels = Array.from({length: 24}, (_, i) => String(i).padStart(2, '0') + ':00');
+
+      const chart = new Chart(canvas, {
+        type: 'line',
+        data: { labels, datasets },
+        options: {
+          responsive: true,
+          aspectRatio: 2.5,
+          interaction: { mode: 'index', intersect: false },
+          plugins: {
+            legend: { position: 'top' },
+            tooltip: { mode: 'index', intersect: false },
+          },
+          scales: {
+            y: { beginAtZero: true, title: { display: true, text: 'kWh' } },
+          },
+          onHover: (event, activeElements) => {
+            document.querySelectorAll('#hourly-table tr.chart-highlight').forEach(r => r.classList.remove('chart-highlight'));
+            if (!activeElements.length) return;
+            const hourIndex = activeElements[0].index;
+            const hourStr = String(hourIndex).padStart(2, '0');
+            const wrapper = document.getElementById('table-wrapper');
+            const rows = document.querySelectorAll('#hourly-table tr[data-hour="' + hourStr + '"]');
+            let firstVisible = null;
+            rows.forEach(r => {
+              if (!r.classList.contains('hidden')) {
+                r.classList.add('chart-highlight');
+                if (!firstVisible) firstVisible = r;
+              }
+            });
+            if (firstVisible && wrapper) {
+              const rowRect = firstVisible.getBoundingClientRect();
+              const wrapperRect = wrapper.getBoundingClientRect();
+              const scrollTarget = wrapper.scrollTop + (rowRect.top - wrapperRect.top) - (wrapper.clientHeight / 2) + (rowRect.height / 2);
+              wrapper.scrollTo({ top: Math.max(0, scrollTarget), behavior: 'smooth' });
+            }
+          },
+        },
+      });
+
+      window.__energyChart = chart;
+    })();
+
+    // Overview chart IIFE
+    (function() {
+      const canvas = document.getElementById('overview-chart');
+      if (!canvas || typeof __overviewChartData === 'undefined') return;
+
+      const { dailyTotals, gateways } = __overviewChartData;
+      const colors = ['#3b82f6', '#f59e0b', '#10b981', '#ef4444'];
+
+      // Extract unique sorted dates
+      const dateSet = new Set();
+      dailyTotals.forEach(row => dateSet.add(row.date));
+      const labels = Array.from(dateSet).sort();
+
+      // Build per-gateway series
+      const datasets = [];
+      gateways.forEach((gw, i) => {
+        const data = labels.map(date => {
+          const match = dailyTotals.find(r => r.date === date && r.gateway_id === gw.id);
+          return match ? match.total_energy : 0;
+        });
+        datasets.push({
+          label: gw.name,
+          data: data,
+          borderColor: colors[i % colors.length],
+          backgroundColor: colors[i % colors.length] + '22',
+          borderWidth: 2,
+          tension: 0.3,
+          pointRadius: 2,
+          _gatewayId: gw.id,
+        });
+      });
+
+      // Total series
+      const totalData = new Array(labels.length).fill(0);
+      datasets.forEach(ds => {
+        ds.data.forEach((v, i) => { totalData[i] += v; });
+      });
+      datasets.push({
+        label: 'Total',
+        data: totalData,
+        borderColor: '#111827',
+        backgroundColor: '#11182722',
+        borderWidth: 3,
+        tension: 0.3,
+        pointRadius: 2,
+        _gatewayId: '__total',
+      });
+
+      const chart = new Chart(canvas, {
+        type: 'line',
+        data: { labels, datasets },
+        options: {
+          responsive: true,
+          aspectRatio: 2.5,
+          interaction: { mode: 'index', intersect: false },
+          plugins: {
+            legend: { position: 'top' },
+            tooltip: { mode: 'index', intersect: false },
+          },
+          scales: {
+            y: { beginAtZero: true, title: { display: true, text: 'kWh' } },
+          },
+          onHover: (event, activeElements) => {
+            document.querySelectorAll('#daily-table tr.chart-highlight').forEach(r => r.classList.remove('chart-highlight'));
+            if (!activeElements.length) return;
+            const dateIndex = activeElements[0].index;
+            const dateStr = labels[dateIndex];
+            const wrapper = document.getElementById('table-wrapper');
+            const rows = document.querySelectorAll('#daily-table tr[data-date="' + dateStr + '"]');
+            let firstVisible = null;
+            rows.forEach(r => {
+              if (!r.classList.contains('hidden')) {
+                r.classList.add('chart-highlight');
+                if (!firstVisible) firstVisible = r;
+              }
+            });
+            if (firstVisible && wrapper) {
+              const rowRect = firstVisible.getBoundingClientRect();
+              const wrapperRect = wrapper.getBoundingClientRect();
+              const scrollTarget = wrapper.scrollTop + (rowRect.top - wrapperRect.top) - (wrapper.clientHeight / 2) + (rowRect.height / 2);
+              wrapper.scrollTo({ top: Math.max(0, scrollTarget), behavior: 'smooth' });
+            }
+          },
+        },
+      });
+
+      window.__overviewChart = chart;
+    })();
+
+    // Debounced date navigation for overview page
+    (function() {
+      const dateFrom = document.getElementById('date_from');
+      const dateTo = document.getElementById('date_to');
+      if (!dateFrom || !dateTo || document.getElementById('date')) return;
+
+      let debounceTimer = null;
+      function navigateWithDates() {
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => {
+          const from = dateFrom.value;
+          const to = dateTo.value;
+          if (from && to) {
+            window.location.href = '/?date_from=' + from + '&date_to=' + to;
+          }
+        }, 500);
+      }
+      dateFrom.addEventListener('change', navigateWithDates);
+      dateTo.addEventListener('change', navigateWithDates);
+    })();
+
+    function updateChart() {
+      [window.__energyChart, window.__overviewChart].filter(Boolean).forEach(chart => {
+        const activeGateways = filterState.gateways;
+        const visibleGatewayData = [];
+        chart.data.datasets.forEach(ds => {
+          if (ds._gatewayId === '__total') return;
+          ds.hidden = activeGateways.size > 0 && !activeGateways.has(ds._gatewayId);
+          if (!ds.hidden) visibleGatewayData.push(ds.data);
+        });
+        const totalDs = chart.data.datasets.find(ds => ds._gatewayId === '__total');
+        if (totalDs) {
+          if (activeGateways.size === 1) {
+            totalDs.hidden = true;
+          } else {
+            totalDs.hidden = false;
+            const newTotal = new Array(totalDs.data.length).fill(0);
+            visibleGatewayData.forEach(data => {
+              data.forEach((v, i) => { newTotal[i] += v; });
+            });
+            totalDs.data = newTotal;
+          }
+        }
+        chart.update();
+      });
     }
   </script>
 </body>

@@ -453,9 +453,48 @@ export function layout(title: string, content: string): string {
         _gatewayId: '__total',
       });
 
+      // Drag-to-zoom plugin for selection overlay
+      const dragState = { active: false, startX: null, endX: null, clampLeft: false, clampRight: false };
+
+      const dragZoomPlugin = {
+        id: 'dragZoom',
+        afterDraw(chart) {
+          if (!dragState.active || dragState.startX === null || dragState.endX === null) return;
+          const { ctx, chartArea } = chart;
+          const left = Math.min(dragState.startX, dragState.endX);
+          const right = Math.max(dragState.startX, dragState.endX);
+          const x = Math.max(left, chartArea.left);
+          const w = Math.min(right, chartArea.right) - x;
+          ctx.save();
+          ctx.fillStyle = 'rgba(59, 130, 246, 0.15)';
+          ctx.fillRect(x, chartArea.top, w, chartArea.bottom - chartArea.top);
+          // Draw bold edge borders when zooming beyond loaded data
+          const edgeColor = 'rgba(37, 99, 235, 0.6)';
+          const h = chartArea.bottom - chartArea.top;
+          if (dragState.clampLeft) {
+            ctx.fillStyle = edgeColor;
+            ctx.shadowColor = 'rgba(37, 99, 235, 0.35)';
+            ctx.shadowBlur = 8;
+            ctx.shadowOffsetX = 2;
+            ctx.fillRect(chartArea.left - 1, chartArea.top, 3, h);
+            ctx.shadowColor = 'transparent';
+          }
+          if (dragState.clampRight) {
+            ctx.fillStyle = edgeColor;
+            ctx.shadowColor = 'rgba(37, 99, 235, 0.35)';
+            ctx.shadowBlur = 8;
+            ctx.shadowOffsetX = -2;
+            ctx.fillRect(chartArea.right - 2, chartArea.top, 3, h);
+            ctx.shadowColor = 'transparent';
+          }
+          ctx.restore();
+        },
+      };
+
       const chart = new Chart(canvas, {
         type: 'line',
         data: { labels, datasets },
+        plugins: [dragZoomPlugin],
         options: {
           responsive: true,
           aspectRatio: 2.5,
@@ -490,6 +529,127 @@ export function layout(title: string, content: string): string {
           },
         },
       });
+
+      canvas.style.cursor = 'crosshair';
+
+      // Drag-to-zoom event listeners
+      canvas.addEventListener('mousedown', (e) => {
+        const rect = canvas.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        if (x < chart.chartArea.left || x > chart.chartArea.right) return;
+        dragState.active = true;
+        dragState.startX = x;
+        dragState.endX = x;
+      });
+
+      canvas.addEventListener('mousemove', (e) => {
+        if (!dragState.active) return;
+        const rect = canvas.getBoundingClientRect();
+        dragState.endX = e.clientX - rect.left;
+        chart.draw();
+      });
+
+      canvas.addEventListener('mouseup', (e) => {
+        if (!dragState.active) return;
+        dragState.active = false;
+        const rect = canvas.getBoundingClientRect();
+        dragState.endX = e.clientX - rect.left;
+
+        const xScale = chart.scales.x;
+        let startIdx = xScale.getValueForPixel(Math.min(dragState.startX, dragState.endX));
+        let endIdx = xScale.getValueForPixel(Math.max(dragState.startX, dragState.endX));
+        startIdx = Math.max(0, Math.round(startIdx));
+        endIdx = Math.min(labels.length - 1, Math.round(endIdx));
+
+        if (startIdx === endIdx) return;
+
+        const dateFrom = document.getElementById('date_from');
+        const dateTo = document.getElementById('date_to');
+        dateFrom.value = labels[startIdx];
+        dateTo.value = labels[endIdx];
+        dateFrom.dispatchEvent(new Event('change'));
+
+        dragState.startX = null;
+        dragState.endX = null;
+        dragState.clampLeft = false;
+        dragState.clampRight = false;
+      });
+
+      canvas.addEventListener('mouseleave', () => {
+        if (dragState.active) {
+          dragState.active = false;
+          dragState.startX = null;
+          dragState.endX = null;
+          dragState.clampLeft = false;
+          dragState.clampRight = false;
+          chart.draw();
+        }
+      });
+      
+      function addDays(dateStr, days) {
+        const d = new Date(dateStr + 'T00:00:00');
+        d.setDate(d.getDate() + days);
+        return d.toISOString().slice(0, 10);
+      }
+
+      let wheelCursorTimer = null;
+      let lastWheelTime = 0;
+      const wheelThrottleMs = 50;
+
+      canvas.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        const now = Date.now();
+        if (now - lastWheelTime < wheelThrottleMs) return;
+        lastWheelTime = now;
+        const dateFrom = document.getElementById('date_from');
+        const dateTo = document.getElementById('date_to');
+        if (!dateFrom || !dateTo) return;
+
+        const curFrom = dateFrom.value || labels[0];
+        const curTo = dateTo.value || labels[labels.length - 1];
+
+        let newFrom, newTo;
+        if (e.deltaY > 0) {
+          // Scroll down = zoom out
+          newFrom = addDays(curFrom, -1);
+          newTo = addDays(curTo, 1);
+        } else {
+          // Scroll up = zoom in
+          newFrom = addDays(curFrom, 1);
+          newTo = addDays(curTo, -1);
+          if (newFrom >= newTo) return; // minimum 1-day range
+        }
+
+        dateFrom.value = newFrom;
+        dateTo.value = newTo;
+        dateFrom.dispatchEvent(new Event('change'));
+
+        // Visual feedback: highlight pending range on chart
+        const xScale = chart.scales.x;
+        const fromIdx = labels.indexOf(newFrom);
+        const toIdx = labels.indexOf(newTo);
+        const leftPx = fromIdx >= 0 ? xScale.getPixelForValue(fromIdx) : chart.chartArea.left;
+        const rightPx = toIdx >= 0 ? xScale.getPixelForValue(toIdx) : chart.chartArea.right;
+        dragState.active = true;
+        dragState.startX = leftPx;
+        dragState.endX = rightPx;
+        dragState.clampLeft = fromIdx < 0;
+        dragState.clampRight = toIdx < 0;
+        chart.draw();
+
+        // Cursor feedback while scrolling
+        canvas.style.cursor = 'ew-resize';
+        clearTimeout(wheelCursorTimer);
+        wheelCursorTimer = setTimeout(() => {
+          dragState.active = false;
+          dragState.startX = null;
+          dragState.endX = null;
+          dragState.clampLeft = false;
+          dragState.clampRight = false;
+          chart.draw();
+          canvas.style.cursor = 'crosshair';
+        }, 600);
+      }, { passive: false });
 
       window.__overviewChart = chart;
     })();

@@ -51,8 +51,6 @@ export interface HourlyBreakdown {
   heat_2: number;
   cool_1: number;
   cool_2: number;
-  electric_heat: number;
-  fan_only: number;
 }
 
 export interface DailySummary {

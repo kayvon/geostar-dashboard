@@ -167,9 +167,7 @@ app.get('/daily', async (c) => {
         COALESCE(SUM(total_heat_1), 0) as heat_1,
         COALESCE(SUM(total_heat_2), 0) as heat_2,
         COALESCE(SUM(total_cool_1), 0) as cool_1,
-        COALESCE(SUM(total_cool_2), 0) as cool_2,
-        COALESCE(SUM(total_electric_heat), 0) as electric_heat,
-        COALESCE(SUM(total_fan_only), 0) as fan_only
+        COALESCE(SUM(total_cool_2), 0) as cool_2
       FROM energy_readings
       WHERE timestamp >= ? AND timestamp <= ?
       GROUP BY hour, gateway_id

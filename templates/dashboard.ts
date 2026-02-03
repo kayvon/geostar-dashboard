@@ -7,14 +7,20 @@ export function overviewPage(
   gateways: string[],
   filters: { date_from: string; date_to: string },
 ): string {
-  const gatewayOptions = gateways
-    .map((g) => `<option value="${escapeHtml(g)}">${escapeHtml(getGatewayName(g))}</option>`)
+  const gatewayPills = gateways
+    .map((g) => `<button class="filter-pill" data-filter="gateway" data-value="${escapeHtml(g)}" type="radio">${escapeHtml(getGatewayName(g))}</button>`)
     .join('');
+
+  const chartData = JSON.stringify({
+    dailyTotals: dailyTotals,
+    gateways: gateways.map(g => ({ id: g, name: getGatewayName(g) })),
+  });
 
   const dailyRows = dailyTotals
     .map(
       (row) => `
       <tr data-gateway="${escapeHtml(row.gateway_id)}"
+          data-date="${escapeHtml(row.date)}"
           data-energy="${row.total_energy}"
           data-heating="${row.total_heating}"
           data-cooling="${row.total_cooling}"
@@ -31,29 +37,26 @@ export function overviewPage(
     .join('');
 
   const content = `
-    <h1>Energy Overview</h1>
+    <h1 style="margin-bottom: 0.5rem;">Energy Overview</h1>
 
     <div class="filters">
       <div>
         <label for="date_from">From</label>
-        <input type="date" id="date_from" name="date_from" value="${filters.date_from}" onchange="this.form.submit()">
+        <input type="date" id="date_from" name="date_from" value="${filters.date_from}">
       </div>
       <div>
         <label for="date_to">To</label>
-        <input type="date" id="date_to" name="date_to" value="${filters.date_to}" onchange="this.form.submit()">
+        <input type="date" id="date_to" name="date_to" value="${filters.date_to}">
       </div>
       <div>
-        <label for="gateway">Heat Pump</label>
-        <select id="gateway" onchange="filterByGateway(this.value)">
-          <option value="all">All Units</option>
-          ${gatewayOptions}
-        </select>
+        <span>Filters</span>
+        <div class="filter-bar">
+          <div class="filter-pills">
+            ${gatewayPills}
+            <button class="filter-clear hidden" id="clear-filters" title="Clear all filters">&times;</button>
+          </div>
+        </div>
       </div>
-      <button type="submit" onclick="
-        const from = document.getElementById('date_from').value;
-        const to = document.getElementById('date_to').value;
-        window.location.href = '/?date_from=' + from + '&date_to=' + to;
-      ">Apply</button>
       <a href="/" role="button" class="secondary outline">Reset</a>
     </div>
 
@@ -80,22 +83,26 @@ export function overviewPage(
       </div>
     </div>
 
-    <h2>Daily Totals</h2>
-    <table>
-      <thead>
-        <tr>
-          <th>Date</th>
-          <th>Unit</th>
-          <th class="text-right">Energy (kWh)</th>
-          <th class="text-right">Heating (kWh)</th>
-          <th class="text-right">Cooling (kWh)</th>
-          <th class="text-right">Runtime (hrs)</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${dailyRows || '<tr><td colspan="6" class="muted">No data for selected range</td></tr>'}
-      </tbody>
-    </table>
+    <script>const __overviewChartData = ${chartData};</script>
+    <div id="overview-chart-container"><canvas id="overview-chart"></canvas></div>
+
+    <div id="table-wrapper" class="table-scroll-container">
+      <table id="daily-table">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Unit</th>
+            <th class="text-right">Energy (kWh)</th>
+            <th class="text-right">Heating (kWh)</th>
+            <th class="text-right">Cooling (kWh)</th>
+            <th class="text-right">Runtime (hrs)</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${dailyRows || '<tr><td colspan="6" class="muted">No data for selected range</td></tr>'}
+        </tbody>
+      </table>
+    </div>
   `;
 
   return layout('Overview', content);
@@ -107,14 +114,15 @@ export function dailyPage(
   hourlyData: HourlyBreakdown[],
   gateways: string[],
 ): string {
-  const gatewayOptions = gateways
-    .map((g) => `<option value="${escapeHtml(g)}">${escapeHtml(getGatewayName(g))}</option>`)
+  const gatewayPills = gateways
+    .map((g) => `<button class="filter-pill" data-filter="gateway" data-value="${escapeHtml(g)}" type="radio">${escapeHtml(getGatewayName(g))}</button>`)
     .join('');
 
   const hourlyRows = hourlyData
     .map(
       (row) => `
       <tr data-gateway="${escapeHtml(row.gateway_id)}"
+          data-hour="${escapeHtml(row.hour)}"
           data-energy="${row.total_energy}"
           data-heating="${row.total_heating}"
           data-cooling="${row.total_cooling}">
@@ -125,15 +133,18 @@ export function dailyPage(
         <td class="text-right">${formatPower(row.heat_2)}</td>
         <td class="text-right">${formatPower(row.cool_1)}</td>
         <td class="text-right">${formatPower(row.cool_2)}</td>
-        <td class="text-right">${formatPower(row.electric_heat)}</td>
-        <td class="text-right">${formatPower(row.fan_only)}</td>
       </tr>
     `,
     )
     .join('');
 
+  const chartData = JSON.stringify({
+    hourlyData: hourlyData,
+    gateways: gateways.map(g => ({ id: g, name: getGatewayName(g) })),
+  });
+
   const content = `
-    <h1>Daily Details</h1>
+    <h1 style="margin-bottom: 0.5rem;">Daily Details</h1>
 
     <div class="filters">
       <div>
@@ -141,11 +152,13 @@ export function dailyPage(
         <input type="date" id="date" name="date" value="${date}" onchange="window.location.href='/daily?date=' + this.value">
       </div>
       <div>
-        <label for="gateway">Heat Pump</label>
-        <select id="gateway" onchange="filterByGateway(this.value)">
-          <option value="all">All Units</option>
-          ${gatewayOptions}
-        </select>
+        <span>Filters</span>
+        <div class="filter-bar">
+          <div class="filter-pills">
+            ${gatewayPills}
+            <button class="filter-clear hidden" id="clear-filters" title="Clear all filters">&times;</button>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -156,25 +169,27 @@ export function dailyPage(
       Cooling: <strong id="summary-cooling">${formatPower(summary.total_cooling)}</strong> kWh
     </div>
 
-    <h2>Hourly Breakdown</h2>
-    <table>
-      <thead>
-        <tr>
-          <th>Hour</th>
-          <th>Unit</th>
-          <th class="text-right">Total (kWh)</th>
-          <th class="text-right">Heat 1</th>
-          <th class="text-right">Heat 2</th>
-          <th class="text-right">Cool 1</th>
-          <th class="text-right">Cool 2</th>
-          <th class="text-right">Elec Heat</th>
-          <th class="text-right">Fan</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${hourlyRows || '<tr><td colspan="9" class="muted">No data for selected date</td></tr>'}
-      </tbody>
-    </table>
+    <script>const __chartData = ${chartData};</script>
+    <div id="chart-container"><canvas id="energy-chart"></canvas></div>
+
+    <div id="table-wrapper" class="table-scroll-container">
+      <table id="hourly-table">
+        <thead>
+          <tr>
+            <th>Hour</th>
+            <th>Unit</th>
+            <th class="text-right">Total (kWh)</th>
+            <th class="text-right">Heat 1</th>
+            <th class="text-right">Heat 2</th>
+            <th class="text-right">Cool 1</th>
+            <th class="text-right">Cool 2</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${hourlyRows || '<tr><td colspan="7" class="muted">No data for selected date</td></tr>'}
+        </tbody>
+      </table>
+    </div>
   `;
 
   return layout('Daily Details', content);

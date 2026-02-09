@@ -612,7 +612,8 @@ export function layout(title: string, content: string): string {
         if (e.deltaY > 0) {
           // Scroll down = zoom out
           newFrom = addDays(curFrom, -1);
-          newTo = addDays(curTo, 1);
+          const today = new Date().toISOString().slice(0, 10);
+          newTo = curTo >= today ? curTo : addDays(curTo, 1);
         } else {
           // Scroll up = zoom in
           newFrom = addDays(curFrom, 1);
@@ -673,6 +674,24 @@ export function layout(title: string, content: string): string {
       }
       dateFrom.addEventListener('change', navigateWithDates);
       dateTo.addEventListener('change', navigateWithDates);
+    })();
+
+    // Keyboard navigation for daily page (arrow keys + vim h/l)
+    (function() {
+      const dateInput = document.getElementById('date');
+      if (!dateInput) return;
+      const prevLink = dateInput.parentElement?.querySelector('a:first-child');
+      const nextLink = dateInput.parentElement?.querySelector('a:last-child');
+      if (!prevLink || !nextLink) return;
+
+      document.addEventListener('keydown', (e) => {
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
+        if (e.key === 'ArrowLeft' || e.key === 'h') {
+          prevLink.click();
+        } else if (e.key === 'ArrowRight' || e.key === 'l') {
+          nextLink.click();
+        }
+      });
     })();
 
     function updateChart() {

@@ -114,6 +114,12 @@ export function dailyPage(
   hourlyData: HourlyBreakdown[],
   gateways: string[],
 ): string {
+  const dateObj = new Date(date + 'T12:00:00Z');
+  const prev = new Date(dateObj); prev.setUTCDate(prev.getUTCDate() - 1);
+  const next = new Date(dateObj); next.setUTCDate(next.getUTCDate() + 1);
+  const prevDate = prev.toISOString().slice(0, 10);
+  const nextDate = next.toISOString().slice(0, 10);
+
   const gatewayPills = gateways
     .map((g) => `<button class="filter-pill" data-filter="gateway" data-value="${escapeHtml(g)}" type="radio">${escapeHtml(getGatewayName(g))}</button>`)
     .join('');
@@ -149,7 +155,11 @@ export function dailyPage(
     <div class="filters">
       <div>
         <label for="date">Date</label>
-        <input type="date" id="date" name="date" value="${date}" onchange="window.location.href='/daily?date=' + this.value">
+        <div style="display: flex; align-items: center; gap: 0.25rem;">
+          <a href="/daily?date=${prevDate}" role="button" class="outline secondary" style="padding: 0.4rem 0.6rem; margin: 0;">&lsaquo;</a>
+          <input type="date" id="date" name="date" value="${date}" onchange="window.location.href='/daily?date=' + this.value" style="margin: 0;">
+          <a href="/daily?date=${nextDate}" role="button" class="outline secondary" style="padding: 0.4rem 0.6rem; margin: 0;">&rsaquo;</a>
+        </div>
       </div>
       <div>
         <span>Filters</span>

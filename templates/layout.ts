@@ -532,6 +532,14 @@ export function layout(title: string, content: string): string {
 
       canvas.style.cursor = 'crosshair';
 
+      // Double-click to navigate to daily page
+      canvas.addEventListener('dblclick', (e) => {
+        const points = chart.getElementsAtEventForMode(e, 'index', { intersect: false }, false);
+        if (!points.length) return;
+        const dateStr = labels[points[0].index];
+        if (dateStr) window.location.href = '/daily?date=' + dateStr;
+      });
+
       // Drag-to-zoom event listeners
       canvas.addEventListener('mousedown', (e) => {
         const rect = canvas.getBoundingClientRect();

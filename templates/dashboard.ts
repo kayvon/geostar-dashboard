@@ -1,11 +1,11 @@
 import { layout, formatPower, formatRuntime, formatTimestamp, escapeHtml, gatewayBadge, getGatewayName } from './layout';
-import type { OverviewStats, DailyTotal, HourlyBreakdown, EnergyReading } from '../types';
+import type { OverviewStats, DailyTotal, HourlyBreakdown, EnergyReading, Resolution } from '../types';
 
 export function overviewPage(
   stats: OverviewStats,
   dailyTotals: DailyTotal[],
   gateways: string[],
-  filters: { date_from: string; date_to: string },
+  filters: { date_from: string; date_to: string; resolution: Resolution },
 ): string {
   const gatewayPills = gateways
     .map((g) => `<button class="filter-pill" data-filter="gateway" data-value="${escapeHtml(g)}" type="radio">${escapeHtml(getGatewayName(g))}</button>`)
@@ -14,6 +14,7 @@ export function overviewPage(
   const chartData = JSON.stringify({
     dailyTotals: dailyTotals,
     gateways: gateways.map(g => ({ id: g, name: getGatewayName(g) })),
+    resolution: filters.resolution,
   });
 
   const dailyRows = dailyTotals
@@ -47,6 +48,14 @@ export function overviewPage(
       <div>
         <label for="date_to">To</label>
         <input type="date" id="date_to" name="date_to" value="${filters.date_to}">
+      </div>
+      <div>
+        <label for="resolution">Resolution</label>
+        <select id="resolution" name="resolution">
+          <option value="daily"${filters.resolution === 'daily' ? ' selected' : ''}>Daily</option>
+          <option value="hourly"${filters.resolution === 'hourly' ? ' selected' : ''}>Hourly</option>
+          <option value="15min"${filters.resolution === '15min' ? ' selected' : ''}>15-min</option>
+        </select>
       </div>
       <div>
         <span>Filters</span>
@@ -90,7 +99,7 @@ export function overviewPage(
       <table id="daily-table">
         <thead>
           <tr>
-            <th>Date</th>
+            <th>${filters.resolution === 'daily' ? 'Date' : 'Date/Time'}</th>
             <th>Unit</th>
             <th class="text-right">Energy (kWh)</th>
             <th class="text-right">Heating (kWh)</th>

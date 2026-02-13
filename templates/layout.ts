@@ -410,8 +410,9 @@ export function layout(title: string, content: string): string {
       const canvas = document.getElementById('overview-chart');
       if (!canvas || typeof __overviewChartData === 'undefined') return;
 
-      const { dailyTotals, gateways } = __overviewChartData;
+      const { dailyTotals, gateways, resolution } = __overviewChartData;
       const colors = ['#3b82f6', '#f59e0b', '#10b981', '#ef4444'];
+      const pointRadius = resolution === 'daily' ? 2 : resolution === 'hourly' ? 1 : 0;
 
       // Extract unique sorted dates
       const dateSet = new Set();
@@ -432,7 +433,7 @@ export function layout(title: string, content: string): string {
           backgroundColor: colors[i % colors.length] + '22',
           borderWidth: 2,
           tension: 0.3,
-          pointRadius: 2,
+          pointRadius: pointRadius,
           _gatewayId: gw.id,
         });
       });
@@ -449,7 +450,7 @@ export function layout(title: string, content: string): string {
         backgroundColor: '#11182722',
         borderWidth: 3,
         tension: 0.3,
-        pointRadius: 2,
+        pointRadius: pointRadius,
         _gatewayId: '__total',
       });
 
@@ -504,6 +505,17 @@ export function layout(title: string, content: string): string {
             tooltip: { mode: 'index', intersect: false },
           },
           scales: {
+            x: resolution !== 'daily' ? {
+              ticks: {
+                maxTicksLimit: 24,
+                callback: function(value, index) {
+                  const label = labels[index];
+                  if (!label) return label;
+                  // Strip year prefix: "YYYY-MM-DD HH:MM" -> "MM-DD HH:MM"
+                  return label.length > 10 ? label.slice(5) : label;
+                },
+              },
+            } : {},
             y: { beginAtZero: true, title: { display: true, text: 'kWh' } },
           },
           onHover: (event, activeElements) => {
@@ -537,7 +549,7 @@ export function layout(title: string, content: string): string {
         const points = chart.getElementsAtEventForMode(e, 'index', { intersect: false }, false);
         if (!points.length) return;
         const dateStr = labels[points[0].index];
-        if (dateStr) window.location.href = '/daily?date=' + dateStr;
+        if (dateStr) window.location.href = '/daily?date=' + dateStr.slice(0, 10);
       });
 
       // Drag-to-zoom event listeners
@@ -676,12 +688,17 @@ export function layout(title: string, content: string): string {
           const from = dateFrom.value;
           const to = dateTo.value;
           if (from && to) {
-            window.location.href = '/?date_from=' + from + '&date_to=' + to;
+            const res = document.getElementById('resolution');
+            const resParam = res ? '&resolution=' + res.value : '';
+            window.location.href = '/?date_from=' + from + '&date_to=' + to + resParam;
           }
         }, 500);
       }
       dateFrom.addEventListener('change', navigateWithDates);
       dateTo.addEventListener('change', navigateWithDates);
+
+      const resSelect = document.getElementById('resolution');
+      if (resSelect) resSelect.addEventListener('change', navigateWithDates);
     })();
 
     // Keyboard navigation for daily page (arrow keys + vim h/l)

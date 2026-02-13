@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import type { Env, OverviewStats, DailyTotal, HourlyBreakdown, EnergyReading } from '../types';
+import type { Env, OverviewStats, DailyTotal, HourlyBreakdown, EnergyReading, Resolution } from '../types';
 import { overviewPage, dailyPage, readingsPage } from '../templates/dashboard';
 
 const app = new Hono<{ Bindings: Env }>();
@@ -52,6 +52,8 @@ app.get('/', async (c) => {
   const defaults = getDefaultDateRange(timezone);
   const date_from = c.req.query('date_from') || defaults.date_from;
   const date_to = c.req.query('date_to') || defaults.date_to;
+  const rawResolution = c.req.query('resolution') || 'daily';
+  const resolution: Resolution = (['daily', 'hourly', '15min'].includes(rawResolution) ? rawResolution : 'daily') as Resolution;
 
   const offsetMs = getTimezoneOffsetMs(timezone, date_from);
   const fromMs = dateToUnixMs(date_from, timezone);
@@ -84,12 +86,32 @@ app.get('/', async (c) => {
     total_runtime: statsResult?.total_runtime || 0,
   };
 
-  // Get daily totals (grouped by date and gateway for front-end filtering)
+  // Build time-bucket SQL expression per resolution
+  let dateBucketExpr: string;
+  let bucketBinds: number[];
+  switch (resolution) {
+    case 'hourly':
+      // date || ' ' || HH:00
+      dateBucketExpr = `date((timestamp + ?) /1000, 'unixepoch') || ' ' || printf('%02d', cast(strftime('%H', (timestamp + ?) /1000, 'unixepoch') as integer)) || ':00'`;
+      bucketBinds = [offsetMs, offsetMs];
+      break;
+    case '15min':
+      // date || ' ' || HH:MM where MM is rounded down to 15-min
+      dateBucketExpr = `date((timestamp + ?) /1000, 'unixepoch') || ' ' || printf('%02d', cast(strftime('%H', (timestamp + ?) /1000, 'unixepoch') as integer)) || ':' || printf('%02d', (cast(strftime('%M', (timestamp + ?) /1000, 'unixepoch') as integer) / 15) * 15)`;
+      bucketBinds = [offsetMs, offsetMs, offsetMs];
+      break;
+    default: // daily
+      dateBucketExpr = `date((timestamp + ?) /1000, 'unixepoch')`;
+      bucketBinds = [offsetMs];
+      break;
+  }
+
+  // Get totals grouped by time bucket and gateway for front-end filtering
   const dailyResult = await db
     .prepare(
       `
       SELECT
-        date((timestamp + ?) /1000, 'unixepoch') as date,
+        ${dateBucketExpr} as date,
         gateway_id,
         COALESCE(SUM(total_power), 0) as total_energy,
         COALESCE(SUM(COALESCE(total_heat_1, 0) + COALESCE(total_heat_2, 0)), 0) as total_heating,
@@ -105,7 +127,7 @@ app.get('/', async (c) => {
       ORDER BY date DESC, gateway_id
     `,
     )
-    .bind(offsetMs, fromMs, toMs)
+    .bind(...bucketBinds, fromMs, toMs)
     .all<DailyTotal>();
 
   const dailyTotals = dailyResult.results || [];
@@ -116,7 +138,7 @@ app.get('/', async (c) => {
     .all<{ gateway_id: string }>();
   const gateways = (gatewaysResult.results || []).map((r) => r.gateway_id);
 
-  return c.html(overviewPage(stats, dailyTotals, gateways, { date_from, date_to }));
+  return c.html(overviewPage(stats, dailyTotals, gateways, { date_from, date_to, resolution }));
 });
 
 // Daily details page (/daily)

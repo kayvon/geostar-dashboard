@@ -53,6 +53,8 @@ export interface HourlyBreakdown {
   cool_2: number;
 }
 
+export type Resolution = 'daily' | 'hourly' | '15min';
+
 export interface DailySummary {
   total_energy: number;
   total_heating: number;

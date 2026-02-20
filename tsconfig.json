@@ -1,0 +1,14 @@
+{
+  "compilerOptions": {
+    "target": "ES2021",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "lib": ["ES2021"],
+    "types": ["./worker-configuration.d.ts"]
+  },
+  "include": ["index.ts", "types.ts", "routes", "templates"],
+  "exclude": ["node_modules", "dist", "client"]
+}

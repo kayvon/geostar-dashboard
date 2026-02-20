@@ -6,8 +6,23 @@ import { initFilters, wireFilterClicks, setFilterChangeHandler, resetFilters, ge
 
 const COLORS = ['#3b82f6', '#f59e0b', '#10b981', '#ef4444'];
 
+// Module-scoped state — persistent across invocations
+let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+let latestTotals: Array<{ gateway_id: string; date: string; total_energy: number; total_heating: number; total_cooling: number; total_runtime: number }> = [];
+let latestGateways: string[] = [];
+
 function buildOverviewUrl(dateFrom: string, dateTo: string, resolution: string): string {
   return `/?date_from=${dateFrom}&date_to=${dateTo}&resolution=${resolution}`;
+}
+
+function navigateWithDates() {
+  if (debounceTimer) clearTimeout(debounceTimer);
+  debounceTimer = setTimeout(() => {
+    const from = (document.getElementById('date_from') as HTMLInputElement).value;
+    const to = (document.getElementById('date_to') as HTMLInputElement).value;
+    const res = (document.getElementById('resolution') as HTMLSelectElement).value;
+    if (from && to) navigate(buildOverviewUrl(from, to, res));
+  }, 500);
 }
 
 export async function overviewPage(url: URL) {
@@ -20,13 +35,36 @@ export async function overviewPage(url: URL) {
   const dateTo = url.searchParams.get('date_to') || '';
   const resolution = url.searchParams.get('resolution') || 'daily';
 
-  // Render skeleton if not already overview page
-  if (!document.getElementById('overview-page')) {
+  const isFirstRender = !document.getElementById('overview-page');
+
+  // Render skeleton once
+  if (isFirstRender) {
     resetFilters();
     app.innerHTML = `<div id="overview-page">
       <h1 style="margin-bottom: 0.5rem;">Energy Overview</h1>
       <div class="filters" id="overview-filters"></div>
-      <div class="stats-grid" id="overview-stats"></div>
+      <div class="stats-grid" id="overview-stats">
+        <div class="stat-card" data-stat="energy">
+          <h3>Total Energy</h3>
+          <div class="value" id="stat-energy">-</div>
+          <span class="unit">kWh</span>
+        </div>
+        <div class="stat-card" data-stat="heating">
+          <h3>Heating</h3>
+          <div class="value" id="stat-heating">-</div>
+          <span class="unit">kWh</span>
+        </div>
+        <div class="stat-card" data-stat="cooling">
+          <h3>Cooling</h3>
+          <div class="value" id="stat-cooling">-</div>
+          <span class="unit">kWh</span>
+        </div>
+        <div class="stat-card" data-stat="runtime">
+          <h3>Runtime</h3>
+          <div class="value" id="stat-runtime">-</div>
+          <span class="unit">hours</span>
+        </div>
+      </div>
       <div id="overview-chart-container"><canvas id="overview-chart"></canvas></div>
       <div id="table-wrapper" class="table-scroll-container">
         <table id="daily-table">
@@ -37,83 +75,72 @@ export async function overviewPage(url: URL) {
     </div>`;
   }
 
-  // Show loading
-  const page = document.getElementById('overview-page')!;
-  page.setAttribute('aria-busy', 'true');
+  // Show loading on tbody only
+  const tbody = document.getElementById('overview-tbody')!;
+  tbody.setAttribute('aria-busy', 'true');
 
   const data = await fetchOverview({ date_from: dateFrom, date_to: dateTo, resolution });
 
   // If we navigated away while loading, bail
   if (getCurrentPage() !== '/') return;
 
-  page.removeAttribute('aria-busy');
+  tbody.removeAttribute('aria-busy');
 
   const { stats, totals, gateways, filters } = data;
 
-  // Render filters
-  const filtersEl = document.getElementById('overview-filters')!;
-  filtersEl.innerHTML = `
-    <div>
-      <label for="date_from">From</label>
-      <input type="date" id="date_from" name="date_from" value="${filters.date_from}">
-    </div>
-    <div>
-      <label for="date_to">To</label>
-      <input type="date" id="date_to" name="date_to" value="${filters.date_to}">
-    </div>
-    <div>
-      <label for="resolution">Resolution</label>
-      <select id="resolution" name="resolution">
-        <option value="daily"${filters.resolution === 'daily' ? ' selected' : ''}>Daily</option>
-        <option value="hourly"${filters.resolution === 'hourly' ? ' selected' : ''}>Hourly</option>
-        <option value="15min"${filters.resolution === '15min' ? ' selected' : ''}>15-min</option>
-      </select>
-    </div>
-    ${initFilters(gateways)}
-    <a href="/" data-link role="button" class="secondary outline">Reset</a>
-  `;
+  // Stash for filter handler
+  latestTotals = totals;
+  latestGateways = gateways;
 
-  // Wire date/resolution controls with debounce
-  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-  function navigateWithDates() {
-    if (debounceTimer) clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(() => {
-      const from = (document.getElementById('date_from') as HTMLInputElement).value;
-      const to = (document.getElementById('date_to') as HTMLInputElement).value;
-      const res = (document.getElementById('resolution') as HTMLSelectElement).value;
-      if (from && to) navigate(buildOverviewUrl(from, to, res));
-    }, 500);
+  // --- Filters: full render on first load, surgical update on nav ---
+  if (isFirstRender) {
+    const filtersEl = document.getElementById('overview-filters')!;
+    filtersEl.innerHTML = `
+      <div>
+        <label for="date_from">From</label>
+        <input type="date" id="date_from" name="date_from" value="${filters.date_from}">
+      </div>
+      <div>
+        <label for="date_to">To</label>
+        <input type="date" id="date_to" name="date_to" value="${filters.date_to}">
+      </div>
+      <div>
+        <label for="resolution">Resolution</label>
+        <select id="resolution" name="resolution">
+          <option value="daily"${filters.resolution === 'daily' ? ' selected' : ''}>Daily</option>
+          <option value="hourly"${filters.resolution === 'hourly' ? ' selected' : ''}>Hourly</option>
+          <option value="15min"${filters.resolution === '15min' ? ' selected' : ''}>15-min</option>
+        </select>
+      </div>
+      ${initFilters(gateways)}
+      <a href="/" data-link role="button" class="secondary outline">Reset</a>
+    `;
+
+    // Wire event listeners once
+    document.getElementById('date_from')!.addEventListener('change', navigateWithDates);
+    document.getElementById('date_to')!.addEventListener('change', navigateWithDates);
+    document.getElementById('resolution')!.addEventListener('change', navigateWithDates);
+
+    wireFilterClicks();
+    setFilterChangeHandler(() => {
+      applyOverviewFilters(latestTotals, latestGateways);
+      updateChartVisibility('overview');
+    });
+  } else {
+    // Surgical update: set values on existing inputs
+    (document.getElementById('date_from') as HTMLInputElement).value = filters.date_from;
+    (document.getElementById('date_to') as HTMLInputElement).value = filters.date_to;
+    const resSelect = document.getElementById('resolution') as HTMLSelectElement;
+    resSelect.value = filters.resolution;
   }
 
-  document.getElementById('date_from')!.addEventListener('change', navigateWithDates);
-  document.getElementById('date_to')!.addEventListener('change', navigateWithDates);
-  document.getElementById('resolution')!.addEventListener('change', navigateWithDates);
+  // --- Stats: update values in place ---
+  document.getElementById('stat-energy')!.textContent = formatPower(stats.total_energy);
+  document.getElementById('stat-heating')!.textContent = formatPower(stats.total_heating);
+  document.getElementById('stat-cooling')!.textContent = formatPower(stats.total_cooling);
+  document.getElementById('stat-runtime')!.textContent = formatRuntime(stats.total_runtime);
 
-  // Render stats
-  document.getElementById('overview-stats')!.innerHTML = `
-    <div class="stat-card" data-stat="energy">
-      <h3>Total Energy</h3>
-      <div class="value">${formatPower(stats.total_energy)}</div>
-      <span class="unit">kWh</span>
-    </div>
-    <div class="stat-card" data-stat="heating">
-      <h3>Heating</h3>
-      <div class="value">${formatPower(stats.total_heating)}</div>
-      <span class="unit">kWh</span>
-    </div>
-    <div class="stat-card" data-stat="cooling">
-      <h3>Cooling</h3>
-      <div class="value">${formatPower(stats.total_cooling)}</div>
-      <span class="unit">kWh</span>
-    </div>
-    <div class="stat-card" data-stat="runtime">
-      <h3>Runtime</h3>
-      <div class="value">${formatRuntime(stats.total_runtime)}</div>
-      <span class="unit">hours</span>
-    </div>
-  `;
-
-  // Render table header
+  // --- Table header ---
   document.getElementById('overview-thead')!.innerHTML = `<tr>
     <th>${filters.resolution === 'daily' ? 'Date' : 'Date/Time'}</th>
     <th>Unit</th>
@@ -123,8 +150,7 @@ export async function overviewPage(url: URL) {
     <th class="text-right">Runtime (hrs)</th>
   </tr>`;
 
-  // Render table rows
-  const tbody = document.getElementById('overview-tbody')!;
+  // --- Table rows ---
   if (totals.length === 0) {
     tbody.innerHTML = '<tr><td colspan="6" class="muted">No data for selected range</td></tr>';
   } else {
@@ -147,7 +173,7 @@ export async function overviewPage(url: URL) {
       .join('');
   }
 
-  // Build chart datasets
+  // --- Chart datasets ---
   const dateSet = new Set<string>();
   totals.forEach((row) => dateSet.add(row.date));
   const labels = Array.from(dateSet).sort();
@@ -186,18 +212,14 @@ export async function overviewPage(url: URL) {
     _gatewayId: '__total',
   });
 
-  // Create/update chart
+  // Create/update chart — onZoom updates inputs then debounces navigate
+  const dateFromEl = document.getElementById('date_from') as HTMLInputElement;
+  const dateToEl = document.getElementById('date_to') as HTMLInputElement;
   const canvas = document.getElementById('overview-chart') as HTMLCanvasElement;
   createOrUpdateOverviewChart(canvas, { labels, datasets, resolution: filters.resolution }, (newFrom, newTo) => {
-    const res = (document.getElementById('resolution') as HTMLSelectElement).value;
-    navigate(buildOverviewUrl(newFrom, newTo, res));
-  });
-
-  // Wire filters
-  wireFilterClicks();
-  setFilterChangeHandler(() => {
-    applyOverviewFilters(totals, gateways);
-    updateChartVisibility('overview');
+    dateFromEl.value = newFrom;
+    dateToEl.value = newTo;
+    navigateWithDates();
   });
 
   // Apply current filter state
@@ -225,23 +247,12 @@ function applyOverviewFilters(
   });
 
   // Update stat cards
-  document.querySelectorAll('[data-stat]').forEach((card) => {
-    const statType = card.getAttribute('data-stat');
-    const valueEl = card.querySelector('.value');
-    if (!valueEl) return;
-    switch (statType) {
-      case 'energy':
-        valueEl.textContent = formatPower(totalEnergy);
-        break;
-      case 'heating':
-        valueEl.textContent = formatPower(totalHeating);
-        break;
-      case 'cooling':
-        valueEl.textContent = formatPower(totalCooling);
-        break;
-      case 'runtime':
-        valueEl.textContent = formatRuntime(totalRuntime);
-        break;
-    }
-  });
+  const energyEl = document.getElementById('stat-energy');
+  const heatingEl = document.getElementById('stat-heating');
+  const coolingEl = document.getElementById('stat-cooling');
+  const runtimeEl = document.getElementById('stat-runtime');
+  if (energyEl) energyEl.textContent = formatPower(totalEnergy);
+  if (heatingEl) heatingEl.textContent = formatPower(totalHeating);
+  if (coolingEl) coolingEl.textContent = formatPower(totalCooling);
+  if (runtimeEl) runtimeEl.textContent = formatRuntime(totalRuntime);
 }

@@ -7,12 +7,18 @@ declare const Chart: any;
 let overviewChart: any = null;
 let dailyChart: any = null;
 
+// Module-scoped mutable refs so event handlers never hold stale closures
+let overviewLabels: string[] = [];
+let overviewOnZoom: ((dateFrom: string, dateTo: string) => void) | null = null;
+
 const COLORS = ['#3b82f6', '#f59e0b', '#10b981', '#ef4444'];
 
 export function destroyChart(which: 'overview' | 'daily') {
   if (which === 'overview' && overviewChart) {
     overviewChart.destroy();
     overviewChart = null;
+    overviewLabels = [];
+    overviewOnZoom = null;
   }
   if (which === 'daily' && dailyChart) {
     dailyChart.destroy();
@@ -64,6 +70,8 @@ const dragZoomPlugin = {
   },
 };
 
+const OVERVIEW_TRANSITION_MS = 400;
+
 export function createOrUpdateOverviewChart(
   canvas: HTMLCanvasElement,
   data: OverviewChartData,
@@ -72,25 +80,56 @@ export function createOrUpdateOverviewChart(
   const { labels, datasets, resolution } = data;
   const pointRadius = resolution === 'daily' ? 2 : resolution === 'hourly' ? 1 : 0;
 
-  // Set point radius on all datasets
-  datasets.forEach((ds: any) => { ds.pointRadius = pointRadius; });
+  // Always update module-scoped refs so event handlers see fresh data
+  overviewLabels = labels;
+  overviewOnZoom = onZoom;
 
   if (overviewChart) {
+    // In-place dataset mutation for animated transitions
     overviewChart.data.labels = labels;
-    overviewChart.data.datasets = datasets;
+
+    const existingIds = new Set(overviewChart.data.datasets.map((ds: any) => ds._gatewayId));
+    const newIds = new Set(datasets.map((ds: any) => ds._gatewayId));
+
+    // Update existing datasets in place
+    overviewChart.data.datasets.forEach((ds: any) => {
+      if (!newIds.has(ds._gatewayId)) return; // will be removed below
+      const src = datasets.find((d: any) => d._gatewayId === ds._gatewayId);
+      if (!src) return;
+      for (let i = 0; i < src.data.length; i++) ds.data[i] = src.data[i];
+      ds.data.length = src.data.length;
+      ds.pointRadius = pointRadius;
+    });
+
+    // Remove stale datasets
+    overviewChart.data.datasets = overviewChart.data.datasets.filter(
+      (ds: any) => newIds.has(ds._gatewayId),
+    );
+
+    // Add new datasets
+    datasets.forEach((ds: any) => {
+      if (!existingIds.has(ds._gatewayId)) {
+        ds.pointRadius = pointRadius;
+        overviewChart.data.datasets.push(ds);
+      }
+    });
+
     overviewChart.options.scales.x = resolution !== 'daily' ? {
       ticks: {
         maxTicksLimit: 24,
         callback: function (_value: any, index: number) {
-          const label = labels[index];
+          const label = overviewLabels[index];
           if (!label) return label;
           return label.length > 10 ? label.slice(5) : label;
         },
       },
     } : {};
-    overviewChart.update('active');
+    overviewChart.update({ duration: OVERVIEW_TRANSITION_MS, easing: 'easeInOutQuart' });
     return overviewChart;
   }
+
+  // Set point radius on all datasets for first render
+  datasets.forEach((ds: any) => { ds.pointRadius = pointRadius; });
 
   overviewChart = new Chart(canvas, {
     type: 'line',
@@ -100,6 +139,9 @@ export function createOrUpdateOverviewChart(
       responsive: true,
       aspectRatio: 2.5,
       interaction: { mode: 'index', intersect: false },
+      transitions: {
+        active: { animation: { duration: OVERVIEW_TRANSITION_MS } },
+      },
       plugins: {
         legend: { position: 'top' },
         tooltip: { mode: 'index', intersect: false },
@@ -109,7 +151,7 @@ export function createOrUpdateOverviewChart(
           ticks: {
             maxTicksLimit: 24,
             callback: function (_value: any, index: number) {
-              const label = labels[index];
+              const label = overviewLabels[index];
               if (!label) return label;
               return label.length > 10 ? label.slice(5) : label;
             },
@@ -121,7 +163,7 @@ export function createOrUpdateOverviewChart(
         document.querySelectorAll('#daily-table tr.chart-highlight').forEach((r) => r.classList.remove('chart-highlight'));
         if (!activeElements.length) return;
         const dateIndex = activeElements[0].index;
-        const dateStr = labels[dateIndex];
+        const dateStr = overviewLabels[dateIndex];
         const wrapper = document.getElementById('table-wrapper');
         const rows = document.querySelectorAll(`#daily-table tr[data-date="${dateStr}"]`);
         let firstVisible: Element | null = null;
@@ -147,7 +189,7 @@ export function createOrUpdateOverviewChart(
   canvas.addEventListener('dblclick', (e) => {
     const points = overviewChart.getElementsAtEventForMode(e, 'index', { intersect: false }, false);
     if (!points.length) return;
-    const dateStr = labels[points[0].index];
+    const dateStr = overviewLabels[points[0].index];
     if (dateStr) navigate('/daily?date=' + dateStr.slice(0, 10));
   });
 
@@ -175,7 +217,7 @@ export function createOrUpdateOverviewChart(
     let startIdx = xScale.getValueForPixel(Math.min(dragState.startX!, dragState.endX!));
     let endIdx = xScale.getValueForPixel(Math.max(dragState.startX!, dragState.endX!));
     startIdx = Math.max(0, Math.round(startIdx));
-    endIdx = Math.min(labels.length - 1, Math.round(endIdx));
+    endIdx = Math.min(overviewLabels.length - 1, Math.round(endIdx));
 
     dragState.startX = null;
     dragState.endX = null;
@@ -183,7 +225,7 @@ export function createOrUpdateOverviewChart(
     dragState.clampRight = false;
 
     if (startIdx === endIdx) return;
-    onZoom(labels[startIdx].slice(0, 10), labels[endIdx].slice(0, 10));
+    if (overviewOnZoom) overviewOnZoom(overviewLabels[startIdx].slice(0, 10), overviewLabels[endIdx].slice(0, 10));
   });
 
   canvas.addEventListener('mouseleave', () => {
@@ -220,8 +262,8 @@ export function createOrUpdateOverviewChart(
       const dateTo = document.getElementById('date_to') as HTMLInputElement | null;
       if (!dateFrom || !dateTo) return;
 
-      const curFrom = dateFrom.value || labels[0];
-      const curTo = dateTo.value || labels[labels.length - 1];
+      const curFrom = dateFrom.value || overviewLabels[0];
+      const curTo = dateTo.value || overviewLabels[overviewLabels.length - 1];
 
       let newFrom: string, newTo: string;
       if (e.deltaY > 0) {
@@ -236,8 +278,8 @@ export function createOrUpdateOverviewChart(
 
       // Visual feedback
       const xScale = overviewChart.scales.x;
-      const fromIdx = labels.indexOf(newFrom);
-      const toIdx = labels.indexOf(newTo);
+      const fromIdx = overviewLabels.indexOf(newFrom);
+      const toIdx = overviewLabels.indexOf(newTo);
       const leftPx = fromIdx >= 0 ? xScale.getPixelForValue(fromIdx) : overviewChart.chartArea.left;
       const rightPx = toIdx >= 0 ? xScale.getPixelForValue(toIdx) : overviewChart.chartArea.right;
       dragState.active = true;
@@ -259,7 +301,7 @@ export function createOrUpdateOverviewChart(
         canvas.style.cursor = 'crosshair';
       }, 600);
 
-      onZoom(newFrom, newTo);
+      if (overviewOnZoom) overviewOnZoom(newFrom, newTo);
     },
     { passive: false },
   );

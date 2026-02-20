@@ -1,4 +1,5 @@
 import { navigate } from '../router';
+import { getGatewayName } from '../utils';
 import { getFilterState } from './filters';
 
 declare const Chart: any;
@@ -268,13 +269,53 @@ export function createOrUpdateOverviewChart(
 
 // --- Daily Chart ---
 
-export function createOrUpdateDailyChart(canvas: HTMLCanvasElement, datasets: any[], labels: string[]): any {
+const DAILY_TRANSITION_MS = 400;
+
+export function createOrUpdateDailyChart(
+  canvas: HTMLCanvasElement,
+  gateways: string[],
+  gatewayData: Record<string, number[]>,
+  totalData: number[],
+  labels: string[],
+): any {
   if (dailyChart) {
-    dailyChart.data.labels = labels;
-    dailyChart.data.datasets = datasets;
-    dailyChart.update('active');
+    // Mutate existing dataset .data arrays in place so Chart.js animates
+    dailyChart.data.datasets.forEach((ds: any) => {
+      if (ds._gatewayId === '__total') {
+        for (let i = 0; i < totalData.length; i++) ds.data[i] = totalData[i];
+      } else if (gatewayData[ds._gatewayId]) {
+        const src = gatewayData[ds._gatewayId];
+        for (let i = 0; i < src.length; i++) ds.data[i] = src[i];
+      }
+    });
+    dailyChart.update({ duration: DAILY_TRANSITION_MS, easing: 'easeInOutQuart' });
     return dailyChart;
   }
+
+  // First render: build dataset objects
+  const datasets: any[] = [];
+  gateways.forEach((gw, i) => {
+    datasets.push({
+      label: getGatewayName(gw),
+      data: [...gatewayData[gw]],
+      borderColor: COLORS[i % COLORS.length],
+      backgroundColor: COLORS[i % COLORS.length] + '22',
+      borderWidth: 2,
+      tension: 0.3,
+      pointRadius: 2,
+      _gatewayId: gw,
+    });
+  });
+  datasets.push({
+    label: 'Total',
+    data: [...totalData],
+    borderColor: '#111827',
+    backgroundColor: '#11182722',
+    borderWidth: 3,
+    tension: 0.3,
+    pointRadius: 2,
+    _gatewayId: '__total',
+  });
 
   dailyChart = new Chart(canvas, {
     type: 'line',
@@ -283,12 +324,18 @@ export function createOrUpdateDailyChart(canvas: HTMLCanvasElement, datasets: an
       responsive: true,
       aspectRatio: 2.5,
       interaction: { mode: 'index', intersect: false },
+      transitions: {
+        active: { animation: { duration: DAILY_TRANSITION_MS } },
+      },
       plugins: {
         legend: { position: 'top' },
         tooltip: { mode: 'index', intersect: false },
       },
       scales: {
-        y: { beginAtZero: true, title: { display: true, text: 'kWh' } },
+        y: {
+          beginAtZero: true,
+          title: { display: true, text: 'kWh' },
+        },
       },
       onHover: (_event: any, activeElements: any[]) => {
         document.querySelectorAll('#hourly-table tr.chart-highlight').forEach((r) => r.classList.remove('chart-highlight'));

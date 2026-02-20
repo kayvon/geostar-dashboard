@@ -12,21 +12,42 @@ function addDays(dateStr: string, days: number): string {
   return d.toISOString().slice(0, 10);
 }
 
+// Track current keyboard nav handler so we can swap it without re-adding listeners
+let keyNavDates: { prev: string; next: string } | null = null;
+
+function ensureKeyNav() {
+  if ((window as any).__dailyKeyNavBound) return;
+  (window as any).__dailyKeyNavBound = true;
+  document.addEventListener('keydown', (e: KeyboardEvent) => {
+    if (!keyNavDates) return;
+    const tag = (e.target as Element).tagName;
+    if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
+    if (e.key === 'ArrowLeft' || e.key === 'h') {
+      navigate('/daily?date=' + keyNavDates.prev);
+    } else if (e.key === 'ArrowRight' || e.key === 'l') {
+      navigate('/daily?date=' + keyNavDates.next);
+    }
+  });
+}
+
 export async function dailyPage(url: URL) {
   const app = document.getElementById('app')!;
-
-  // Destroy overview chart if coming from another page
   destroyChart('overview');
 
   const date = url.searchParams.get('date') || '';
+  const isFirstRender = !document.getElementById('daily-page');
 
-  // Render skeleton if not already daily page
-  if (!document.getElementById('daily-page')) {
+  if (isFirstRender) {
     resetFilters();
     app.innerHTML = `<div id="daily-page">
       <h1 style="margin-bottom: 0.5rem;">Daily Details</h1>
       <div class="filters" id="daily-filters"></div>
-      <div class="summary-section" id="daily-summary"></div>
+      <div class="summary-section" id="daily-summary">
+        <strong>Daily Summary:</strong>
+        Total Energy: <strong id="summary-energy">-</strong> kWh |
+        Heating: <strong id="summary-heating">-</strong> kWh |
+        Cooling: <strong id="summary-cooling">-</strong> kWh
+      </div>
       <div id="chart-container"><canvas id="energy-chart"></canvas></div>
       <div id="table-wrapper" class="table-scroll-container">
         <table id="hourly-table">
@@ -47,63 +68,62 @@ export async function dailyPage(url: URL) {
     </div>`;
   }
 
-  const page = document.getElementById('daily-page')!;
-  page.setAttribute('aria-busy', 'true');
+  // Only show busy on the table, not the chart area
+  const tbody = document.getElementById('hourly-tbody')!;
+  tbody.setAttribute('aria-busy', 'true');
 
   const data = await fetchDaily({ date });
 
   if (getCurrentPage() !== '/daily') return;
 
-  page.removeAttribute('aria-busy');
+  tbody.removeAttribute('aria-busy');
 
   const { date: currentDate, summary, hourly, gateways } = data;
   const prevDate = addDays(currentDate, -1);
   const nextDate = addDays(currentDate, 1);
 
-  // Render filters
-  const filtersEl = document.getElementById('daily-filters')!;
-  filtersEl.innerHTML = `
-    <div>
-      <label for="date">Date</label>
-      <div style="display: flex; align-items: center; gap: 0.25rem;">
-        <a href="/daily?date=${prevDate}" data-link role="button" class="outline secondary" style="padding: 0.4rem 0.6rem; margin: 0;">&lsaquo;</a>
-        <input type="date" id="date" name="date" value="${currentDate}" style="margin: 0;">
-        <a href="/daily?date=${nextDate}" data-link role="button" class="outline secondary" style="padding: 0.4rem 0.6rem; margin: 0;">&rsaquo;</a>
+  // Update keyboard nav targets (no listener churn)
+  keyNavDates = { prev: prevDate, next: nextDate };
+  ensureKeyNav();
+
+  // --- Filters: full render on first load, surgical update on nav ---
+  if (isFirstRender) {
+    const filtersEl = document.getElementById('daily-filters')!;
+    filtersEl.innerHTML = `
+      <div>
+        <label for="date">Date</label>
+        <div style="display: flex; align-items: center; gap: 0.25rem;">
+          <a href="/daily?date=${prevDate}" data-link id="prev-day" role="button" class="outline secondary" style="padding: 0.4rem 0.6rem; margin: 0;">&lsaquo;</a>
+          <input type="date" id="date" name="date" value="${currentDate}" style="margin: 0;">
+          <a href="/daily?date=${nextDate}" data-link id="next-day" role="button" class="outline secondary" style="padding: 0.4rem 0.6rem; margin: 0;">&rsaquo;</a>
+        </div>
       </div>
-    </div>
-    ${initFilters(gateways)}
-  `;
-
-  // Wire date input
-  document.getElementById('date')!.addEventListener('change', (e) => {
-    const val = (e.target as HTMLInputElement).value;
-    if (val) navigate('/daily?date=' + val);
-  });
-
-  // Keyboard navigation
-  function handleKeyNav(e: KeyboardEvent) {
-    if ((e.target as Element).tagName === 'INPUT' || (e.target as Element).tagName === 'SELECT' || (e.target as Element).tagName === 'TEXTAREA') return;
-    if (e.key === 'ArrowLeft' || e.key === 'h') {
-      navigate('/daily?date=' + prevDate);
-    } else if (e.key === 'ArrowRight' || e.key === 'l') {
-      navigate('/daily?date=' + nextDate);
-    }
+      ${initFilters(gateways)}
+    `;
+    document.getElementById('date')!.addEventListener('change', (e) => {
+      const val = (e.target as HTMLInputElement).value;
+      if (val) navigate('/daily?date=' + val);
+    });
+    wireFilterClicks();
+    setFilterChangeHandler(() => {
+      applyDailyFilters();
+      updateChartVisibility('daily');
+    });
+  } else {
+    // Just update the date value and prev/next links
+    (document.getElementById('date') as HTMLInputElement).value = currentDate;
+    const prevLink = document.getElementById('prev-day') as HTMLAnchorElement;
+    const nextLink = document.getElementById('next-day') as HTMLAnchorElement;
+    prevLink.href = `/daily?date=${prevDate}`;
+    nextLink.href = `/daily?date=${nextDate}`;
   }
-  // Remove old listener, add new
-  document.removeEventListener('keydown', (window as any).__dailyKeyNav);
-  (window as any).__dailyKeyNav = handleKeyNav;
-  document.addEventListener('keydown', handleKeyNav);
 
-  // Render summary
-  document.getElementById('daily-summary')!.innerHTML = `
-    <strong>Daily Summary:</strong>
-    Total Energy: <strong id="summary-energy">${formatPower(summary.total_energy)}</strong> kWh |
-    Heating: <strong id="summary-heating">${formatPower(summary.total_heating)}</strong> kWh |
-    Cooling: <strong id="summary-cooling">${formatPower(summary.total_cooling)}</strong> kWh
-  `;
+  // --- Summary: update values in place ---
+  document.getElementById('summary-energy')!.textContent = formatPower(summary.total_energy);
+  document.getElementById('summary-heating')!.textContent = formatPower(summary.total_heating);
+  document.getElementById('summary-cooling')!.textContent = formatPower(summary.total_cooling);
 
-  // Render table
-  const tbody = document.getElementById('hourly-tbody')!;
+  // --- Table ---
   if (hourly.length === 0) {
     tbody.innerHTML = '<tr><td colspan="7" class="muted">No data for selected date</td></tr>';
   } else {
@@ -126,66 +146,34 @@ export async function dailyPage(url: URL) {
       .join('');
   }
 
-  // Build chart datasets
+  // --- Chart: build data and update in place ---
   const labels = Array.from({ length: 24 }, (_, i) => String(i).padStart(2, '0') + ':00');
-  const datasets: any[] = [];
 
-  gateways.forEach((gw, i) => {
+  const gatewayData: Record<string, number[]> = {};
+  gateways.forEach((gw) => {
     const d = new Array(24).fill(0);
     hourly.forEach((row) => {
       if (row.gateway_id === gw) {
-        const h = parseInt(row.hour, 10);
-        d[h] = row.total_energy;
+        d[parseInt(row.hour, 10)] = row.total_energy;
       }
     });
-    datasets.push({
-      label: getGatewayName(gw),
-      data: d,
-      borderColor: COLORS[i % COLORS.length],
-      backgroundColor: COLORS[i % COLORS.length] + '22',
-      borderWidth: 2,
-      tension: 0.3,
-      pointRadius: 2,
-      _gatewayId: gw,
-    });
+    gatewayData[gw] = d;
   });
 
-  // Total series
+  // Compute total
   const totalData = new Array(24).fill(0);
-  datasets.forEach((ds) => {
-    ds.data.forEach((v: number, i: number) => {
-      totalData[i] += v;
-    });
-  });
-  datasets.push({
-    label: 'Total',
-    data: totalData,
-    borderColor: '#111827',
-    backgroundColor: '#11182722',
-    borderWidth: 3,
-    tension: 0.3,
-    pointRadius: 2,
-    _gatewayId: '__total',
+  gateways.forEach((gw) => {
+    gatewayData[gw].forEach((v, i) => { totalData[i] += v; });
   });
 
   const canvas = document.getElementById('energy-chart') as HTMLCanvasElement;
-  createOrUpdateDailyChart(canvas, datasets, labels);
+  createOrUpdateDailyChart(canvas, gateways, gatewayData, totalData, labels);
 
-  // Wire filters
-  wireFilterClicks();
-  setFilterChangeHandler(() => {
-    applyDailyFilters(summary, hourly);
-    updateChartVisibility('daily');
-  });
-
-  applyDailyFilters(summary, hourly);
+  applyDailyFilters();
   updateChartVisibility('daily');
 }
 
-function applyDailyFilters(
-  _summary: { total_energy: number; total_heating: number; total_cooling: number },
-  _hourly: Array<any>,
-) {
+function applyDailyFilters() {
   let totalEnergy = 0, totalHeating = 0, totalCooling = 0;
 
   document.querySelectorAll('#hourly-tbody tr[data-gateway]').forEach((row) => {

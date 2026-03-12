@@ -57,3 +57,11 @@ There are two workers:
   - The web app served by hono with a basic template engine
 
 > There's a simple backfill bash script to page the backfill requests
+
+```
+Extra note: I am hesitant to overuse LLMs, but this is a disposable side project, so it's kind of perfect. I'm verifying the data manually now and then, and guiding the architecture a bit, but this feels like a perfect use. There's a billion dashboards out there, so I'm not expecting anything novel.
+
+I am finding that it's a hell of a lot faster than I am at deconstructing an api. I'm currently using it to reverse engineer the fan coil app which is super janky, and not a web app. There's no nonce used, so even though websocket data is encrypted, I can easily map encrypted ids to each of my units.
+
+I'm curious on this last point if it will find serious security issues: I hate that I'm stuck with this ancient, non-updated, amateur app for my nice fan coils. When first installed, it showed be the names and temperatures and distances from me of a huge number of thermostats around the world — this was _not_ a good sign for data isolation...
+```

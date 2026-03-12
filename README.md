@@ -1,4 +1,6 @@
-# A simple dashboard for Waterfurnace/Geostar Symphony data. 
+# A simple dashboard for home heating data: Temps, set temps, energy consumption, ground source heat pump loop temp, etc
+
+## For now, this is only data from Waterfurnace/Geostar Symphony
 
 ### Why?
 
